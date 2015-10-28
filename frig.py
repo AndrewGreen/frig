@@ -6,47 +6,49 @@ import sys
 
 from grt import Grt
 
-# TODO define config externally
-config = {
-    'targets': {
-        'donation_interface': {
-            'location': '/srv/DonationInterface',
-            'deploy_branch': 'deployment',
-            'development_branch': 'master',
-            'submodule_locations': {
-                # this will take some fiddling
-                '/srv/core': '/extensions/DonationInterface'
-            }
-        },
-        'mediawiki_core': {
-            'location': '/srv/core',
-            'deploy_branch': 'fundraising/REL1_25',
-            'development_branch': 'master', # yeah no
-        },
-        'smash_pig': {
-        }
-    },
-    'actions': [
-        'merge'
-    ],
-    'aliases': {
-        'di': 'donation_interface',
-        'sp': 'smash_pig'
-    }
-}
+actions = [
+    'merge',
+    'bump'
+]
 
 # Fund Raising Intuit Git
 class Frig:
 
+    targets = {
+        'crm': {
+        },
+        'donation_interface': {
+            'path': '/srv/DonationInterface',
+            'deploy_branch': 'deployment',
+            'submodule_locations': {
+                # parent module and relative path
+                'mediawiki_core': 'extensions/DonationInterface'
+            }
+        },
+        'mediawiki_core': {
+            'path': '/srv/core',
+            'deploy_branch': 'fundraising/REL1_25',
+        },
+        'smash_pig': {
+        }
+    }
+
     target = None
 
     def __init__ ( self, target ):
-        self.target = target
 
+        if target in self.targets:
+            self.target = target
+        else:
+            raise ValueError( 'invalid target: ' + target ) 
+
+    # merge changes from master into the specified deploy branch
     def merge ( self ):
 
-        os.chdir( self.target['location'] )
-        subprocess.call( ['git', 'checkout', self.target['deploy_branch'] ] )
+        t = self.targets[self.target]
+
+        os.chdir( t['path'] )
+        subprocess.call( ['git', 'checkout', t['deploy_branch']] )
         subprocess.call( ['git', 'fetch', '--all'] )
         # if we can't cleanly rebase let's bail
         # FIXME this assumes we're tracking a branch
@@ -54,7 +56,7 @@ class Frig:
 
         commitmsg = subprocess.check_output( [
             'git', 'log', '--oneline', '--no-merges', '--reverse',
-            self.target['deploy_branch'] + '..master'
+            t['deploy_branch'] + '..master'
         ] )
 
         try:
@@ -86,31 +88,35 @@ class Frig:
         g = Grt()
         g.approve( change_id )
 
-    # TODO function that manages composer updates
+    # update any specified submodules of this target repo
+    def bump ( self ):
 
-    # TODO function to bump submodule pointers (or use .gitmodules)
+        t = self.targets[self.target]
+
+        for parent, path in t['submodule_locations'].iteritems():
+            os.chdir( self.targets[parent]['path'] + '/' + path )
+            subprocess.call( ['git', 'checkout', t['deploy_branch']] )
+            try: 
+                out = subprocess.check_output(
+                    ['git', 'pull', 'origin', t['deploy_branch']]
+                )
+            except subprocess.CalledProcessError as e:
+                print e.output
+                #os.chdir( self.targets[parent['path'] )
+                #subprocess.call( ['git', 'submodule', 'update' ] )
+
+    # TODO function that manages composer updates
 
 def main ( args ):
 
-    if len( args ) != 2:
-        usage( 'invalid args' )
+    if args[0] not in actions:
+        usage( 'invalid action: ' + args[0] )
 
-    action = None
-    if args[0] in config['actions']:
-        action = args[0]
-    else:
-        usage( 'unknown action' )
-
-    target = None
-    if args[1] in config['targets']:
-        target = config['targets'][args[1]]
-    elif args[1] in config['aliases']:
-        target = config['targets'][config['aliases'][args[1]]]
-    else:
-        usage( 'unknown target' )
-
-    f = Frig( target=target )
-    getattr( f, action )()
+    try:
+        f = Frig( target=args[1] )
+        getattr( f, args[0] )()
+    except ValueError as e:
+        usage( str( e ) )
 
 def usage ( errstr ):
     sys.stderr.write( errstr + '\n' +'usage: frig.py <action> <target>\n' )
