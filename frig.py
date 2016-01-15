@@ -4,99 +4,91 @@ import os
 import subprocess
 import sys
 
-from grt import Grt
+targets = {
+    'crm': {
+    },
+    'donation_interface': {
+        'path': '/srv/core/extensions/DonationInterface',
+        'branch': 'deployment',
+    },
+    'mediawiki': {
+        'path': '/srv/core',
+        'branch': 'fundraising/REL1_25',
+    },
+}
 
-actions = [
-    'merge',
-    'bump'
-]
+submodules = {
+    'donation_interface': 'mediawiki'
+}
 
 # Fund Raising Intuit Git
 class Frig:
 
-    targets = {
-        'crm': {
-        },
-        'donation_interface': {
-            'path': '/srv/DonationInterface',
-            'deploy_branch': 'deployment',
-            'submodule_locations': {
-                # parent module and relative path
-                'mediawiki_core': 'extensions/DonationInterface'
-            }
-        },
-        'mediawiki_core': {
-            'path': '/srv/core',
-            'deploy_branch': 'fundraising/REL1_25',
-        },
-        'smash_pig': {
-        }
-    }
-
-    target = None
-
-    def __init__ ( self, target ):
-
-        if target in self.targets:
-            self.target = target
-        else:
-            raise ValueError( 'invalid target: ' + target ) 
-
     # merge changes from master into the specified deploy branch
-    def merge ( self ):
-
-        t = self.targets[self.target]
+    def prep ( self, t ):
 
         os.chdir( t['path'] )
-        subprocess.call( ['git', 'checkout', t['deploy_branch']] )
-        subprocess.call( ['git', 'fetch', '--all'] )
-        # if we can't cleanly rebase let's bail
-        # FIXME this assumes we're tracking a branch
-        subprocess.call( ['git', 'pull', '--rebase'] )
+        subprocess.check_call( ['git', 'fetch', '--all'] )
+        # TODO supply remote?
+        subprocess.check_call( [
+            'git', 'reset', '--hard',
+            'origin/' + t['branch']
+        ] )
 
+        # TODO supply branch?
         commitmsg = subprocess.check_output( [
             'git', 'log', '--oneline', '--no-merges', '--reverse',
-            t['deploy_branch'] + '..master'
+            t['branch'] + '..master'
         ] )
 
         try:
             out = subprocess.check_output(
                 ['git', 'merge', 'master', '-m', commitmsg]
             )
+
+            if out == 'Already up-to-date.\n':
+                return error, 'Nothing to deploy.\n'
+
         except subprocess.CalledProcessError as e:
-            # the tests dir from master gets deleted so changes there will
-            # conflict. i don't think there's a good way to do a partial merge
-            # while keeping reconciling commit history between the branches,
-            # so if the tests conflict just remove the dir and add a message
-            # to the merge commit.
+            # generally don't deploy tests
             # TODO identify which repos this applies to.
             if e.output[:32] == 'CONFLICT (modify/delete): tests/':
-                subprocess.call( ['rm', '-rf', 'tests'] )
-                subprocess.call( [
+                subprocess.check_call( ['rm', '-rf', 'tests'] )
+                subprocess.check_call( [
                     'git', 'commit', '-am',
                     'Merge master into deployment\n\n'
                     + commitmsg + '\n\nRemoved tests'
                 ] )
 
-        if out == 'Already up-to-date.\n':
-            exit( 0 )
+        sha1 = subprocess.check_output( ['git', 'rev-parse', 'HEAD'] )
 
+        return 'success','updated ' + t['path'] + ' to ' + sha1
         #subprocess.check_output( ['git', 'review' )
         # regex out change ID
-        change_id = '249231'
+        # print link
+        # wait for input
+        # wget/api change status?
 
-        g = Grt()
-        g.approve( change_id )
+    def bump ( self, t, s ):
 
-    # update any specified submodules of this target repo
-    def bump ( self ):
+        # TODO multiple submodules of same repo? gets ugly...
+        submodule_path = subprocess.check_output( [
+            'grep', '-e', 'path.*DonationInterface', t['path'] + '/.gitmodules',
+            '|', 'sed', '"s/.*path = \(.*DonationInterface\)/\\1/"'
+        ] )
 
-        t = self.targets[self.target]
+        if not submodule_path:
+            return 'error','missing submodule'
 
-        for parent, path in t['submodule_locations'].iteritems():
-            os.chdir( self.targets[parent]['path'] + '/' + path )
-            subprocess.call( ['git', 'checkout', t['deploy_branch']] )
-            try: 
+        # make relative path absolute
+        submodule_path = t['path'] + '/' + submodule_path
+
+        # if the submodule has been edited in place we can assume it's at the
+        # correct revision. otherwise update it.
+        if s['path'] != submodule_abs:
+            os.chdir( submodule_abs )
+            subprocess.check_call( ['git', 'checkout', s['branch']] )
+            try:
                 out = subprocess.check_output(
                     ['git', 'pull', 'origin', t['deploy_branch']]
                 )
@@ -105,22 +97,25 @@ class Frig:
                 #os.chdir( self.targets[parent['path'] )
                 #subprocess.call( ['git', 'submodule', 'update' ] )
 
-    # TODO function that manages composer updates
-
 def main ( args ):
 
-    if args[0] not in actions:
-        usage( 'invalid action: ' + args[0] )
+    f = Frig()
 
-    try:
-        f = Frig( target=args[1] )
-        getattr( f, args[0] )()
-    except ValueError as e:
-        usage( str( e ) )
+    if args[0] not in targets:
+        error( 'invalid target' )
 
-def usage ( errstr ):
-    sys.stderr.write( errstr + '\n' +'usage: frig.py <action> <target>\n' )
-    sys.exit( 1 )
+    handle( f.prep( targets[args[0]] ) )
+
+    if args[0] in submodules:
+        handle( f.bump( targets[submodules[arg[0]]], targets[args[0]] ) )
+
+def handle ( result ):
+    if result[0] == 'error':
+        sys.stderr.write( result[1] + '\n' )
+        sys.exit( 1 )
+
+    sys.stdout.write( result[1] + '\n' )
+    sys.exit( 0 )
 
 if __name__ == '__main__':
     sys.exit( main( sys.argv[1:] ) )
