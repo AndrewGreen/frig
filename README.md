@@ -7,6 +7,7 @@ usage: frig.py [-h] [-m MERGE] [-d DEPLOY] [-r REMOTE] {prep,bump} [target]
 
 ## example usage
 let's say you have new commits to submodule/master that you want to deploy
+
     cd /path/to/submodule
     frig prep
     # you now have a new commit to the submodule
