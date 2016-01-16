@@ -65,20 +65,25 @@ class Frig:
                     + commitmsg + '\n\nRemoved tests'
                 ] )
 
-        sha1 = subprocess.check_output( ['git', 'rev-parse', 'HEAD'] )
+        newrev = subprocess.check_output( ['git', 'rev-parse', 'HEAD'] )
 
-        return 'success','updated ' + c['deploy'] + ' to ' + sha1
+        return 'success','updated ' + c['deploy'] + ' to ' + newrev
 
-    def bump ( self, t, s ):
+    def bump ( self ):
+
+        c = self.config
 
         # TODO multiple submodules of same repo? gets ugly...
         submodule_path = subprocess.check_output( [
-            'grep', '-e', 'path.*DonationInterface', t['path'] + '/.gitmodules',
-            '|', 'sed', '"s/.*path = \(.*DonationInterface\)/\\1/"'
-        ] )
+            'sed',
+            's/^.*path = \(.*' + c['target'] + '\)/\\1/;tx;d;:x',
+            '.gitmodules'
+        ] ).rstrip()
 
         if not submodule_path:
             return 'error','missing submodule'
+
+        sys.exit( 0 )
 
         # make relative path absolute
         submodule_path = t['path'] + '/' + submodule_path
