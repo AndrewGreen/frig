@@ -3,47 +3,52 @@
 import os
 import subprocess
 import sys
+import argparse
 
-targets = {
-    'crm': {
-    },
-    'donation_interface': {
-        'path': '/srv/core/extensions/DonationInterface',
-        'branch': 'deployment',
-    },
-    'mediawiki': {
-        'path': '/srv/core',
-        'branch': 'fundraising/REL1_25',
-    },
-}
-
-submodules = {
-    'donation_interface': 'mediawiki'
+defaults = {
+    'merge': 'master',
+    'deploy': 'deployment',
+    'remote': 'origin'
 }
 
 # Fund Raising Intuit Git
 class Frig:
 
-    # merge changes from master into the specified deploy branch
-    def prep ( self, t ):
+    config = None
 
-        os.chdir( t['path'] )
-        subprocess.check_call( ['git', 'fetch', '--all'] )
-        # TODO supply remote?
-        subprocess.check_call( [
-            'git', 'reset', '--hard',
-            'origin/' + t['branch']
-        ] )
+    def __init__ ( self, args ):
+        self.config = args
 
-        # TODO supply branch?
+    # merge changes from <merge> into <deploy>
+    def prep ( self ):
+
+        c = self.config # for brevity
+
+        # XXX is it safe to assume deploy branch is tracked?
+        subprocess.check_call( ['git', 'fetch', c['remote']] )
+        subprocess.check_call( ['git', 'checkout', c['deploy']] )
+        subprocess.check_call( ['git', 'pull'] )
+
+        # we should be up to date with remote
+        headrev = subprocess.check_output( ['git', 'rev-parse', 'HEAD'] )
+        remoterev = subprocess.check_output(
+            ['git', 'rev-parse', c['remote'] + '/' + c['deploy']]
+        )
+
+        # if not, bail
+        if headrev != remoterev:
+            return 'error','deploy branch has diverged from origin'
+
+        # prep commit message
         commitmsg = subprocess.check_output( [
             'git', 'log', '--oneline', '--no-merges', '--reverse',
-            t['branch'] + '..master'
+            c['deploy'] + '..' + c['merge']
         ] )
 
+        # attempt the merge
         try:
             out = subprocess.check_output(
-                ['git', 'merge', 'master', '-m', commitmsg]
+                ['git', 'merge', c['merge'], '-m', commitmsg]
             )
 
             if out == 'Already up-to-date.\n':
@@ -56,18 +61,13 @@ class Frig:
                 subprocess.check_call( ['rm', '-rf', 'tests'] )
                 subprocess.check_call( [
                     'git', 'commit', '-am',
-                    'Merge master into deployment\n\n'
+                    'Merge ' + c['merge'] + ' into ' + c['deploy'] + '\n\n'
                     + commitmsg + '\n\nRemoved tests'
                 ] )
 
         sha1 = subprocess.check_output( ['git', 'rev-parse', 'HEAD'] )
 
-        return 'success','updated ' + t['path'] + ' to ' + sha1
-        #subprocess.check_output( ['git', 'review' )
-        # regex out change ID
-        # print link
-        # wait for input
-        # wget/api change status?
+        return 'success','updated ' + c['deploy'] + ' to ' + sha1
 
     def bump ( self, t, s ):
 
@@ -83,10 +83,10 @@ class Frig:
         # make relative path absolute
         submodule_path = t['path'] + '/' + submodule_path
 
-        # if the submodule has been edited in place we can assume it's at the
-        # correct revision. otherwise update it.
-        if s['path'] != submodule_abs:
-            os.chdir( submodule_abs )
+        # if the submodule has been edited in place we can assume it's
+        # at the correct revision. otherwise update it.
+        if s['path'] != submodule_path:
+            os.chdir( submodule_path )
             subprocess.check_call( ['git', 'checkout', s['branch']] )
             try:
                 out = subprocess.check_output(
@@ -99,22 +99,21 @@ class Frig:
 
 def main ( args ):
 
-    f = Frig()
+    parser = argparse.ArgumentParser( description='Fund Raising Intuit Git' )
+    parser.add_argument( 'action', choices=['prep', 'bump'] )
+    parser.add_argument( 'target', help='Submodule to update', nargs='?' )
+    parser.add_argument( '-m', '--merge', default=defaults['merge'] )
+    parser.add_argument( '-d', '--deploy', default=defaults['deploy'] )
+    parser.add_argument( '-r', '--remote', default=defaults['remote'] )
+    args = vars( parser.parse_args() )
 
-    if args[0] not in targets:
-        error( 'invalid target' )
-
-    handle( f.prep( targets[args[0]] ) )
-
-    if args[0] in submodules:
-        handle( f.bump( targets[submodules[arg[0]]], targets[args[0]] ) )
-
-def handle ( result ):
-    if result[0] == 'error':
-        sys.stderr.write( result[1] + '\n' )
+    f = Frig( args )
+    status,message = getattr( f, args['action'] )()
+    if status == 'error':
+        sys.stderr.write( '\033[0;31m' + message + '\033[0m\n' )
         sys.exit( 1 )
 
-    sys.stdout.write( result[1] + '\n' )
+    sys.stdout.write( '\033[0;32m' + message + '\033[0m\n' )
     sys.exit( 0 )
 
 if __name__ == '__main__':
