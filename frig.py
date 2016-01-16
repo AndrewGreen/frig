@@ -19,7 +19,6 @@ class Frig:
     def __init__ ( self, args ):
         self.config = args
 
-    # merge changes from <merge> into <deploy>
     def prep ( self ):
 
         c = self.config # for brevity
@@ -52,7 +51,7 @@ class Frig:
             )
 
             if out == 'Already up-to-date.\n':
-                return error, 'Nothing to deploy.\n'
+                return error, 'nothing to deploy.\n'
 
         except subprocess.CalledProcessError as e:
             # generally don't deploy tests
@@ -73,34 +72,35 @@ class Frig:
 
         c = self.config
 
+        # TODO this assumes the parent repo is checked out to the deployment
+        # branch. branch name could be supplied with a flag. worth it?
+
         # TODO multiple submodules of same repo? gets ugly...
         submodule_path = subprocess.check_output( [
             'sed',
-            's/^.*path = \(.*' + c['target'] + '\)/\\1/;tx;d;:x',
+            's/^.*path = \(.*' + c['target'] + '\)$/\\1/;tx;d;:x',
             '.gitmodules'
-        ] ).rstrip()
+        ] ).rstrip() # i can't figure out why this captures a newline
 
         if not submodule_path:
             return 'error','missing submodule'
 
-        sys.exit( 0 )
+        parent = os.getcwd()
+        os.chdir( parent + '/' + submodule_path )
+        subprocess.check_call( ['git', 'fetch', c['remote']] )
+        subprocess.check_call( ['git', 'checkout', c['deploy']] )
+        out = subprocess.check_output( ['git', 'pull'] )
 
-        # make relative path absolute
-        submodule_path = t['path'] + '/' + submodule_path
+        if out == 'Already up-to-date.\n':
+            return 'error', 'submodule already at newest version.\n'
 
-        # if the submodule has been edited in place we can assume it's
-        # at the correct revision. otherwise update it.
-        if s['path'] != submodule_path:
-            os.chdir( submodule_path )
-            subprocess.check_call( ['git', 'checkout', s['branch']] )
-            try:
-                out = subprocess.check_output(
-                    ['git', 'pull', 'origin', t['deploy_branch']]
-                )
-            except subprocess.CalledProcessError as e:
-                print e.output
-                #os.chdir( self.targets[parent['path'] )
-                #subprocess.call( ['git', 'submodule', 'update' ] )
+        newrev = subprocess.check_output( ['git', 'rev-parse', 'HEAD'] )
+        os.chdir( parent )
+        subprocess.check_call( [
+            'git', 'commit', '-am', 'Update ' + c['target'] + ' submodule'
+        ] )
+
+        return 'success','updated ' + c['target'] + ' to ' + newrev
 
 def main ( args ):
 
