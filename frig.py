@@ -13,12 +13,12 @@ defaults = {
 
 # all the default shell interfaces are surprisingly shitty
 def call ( cmd ):
-    p = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+    p = subprocess.Popen( cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE )
 
     out,err = p.communicate()
 
     if p.returncode > 0:
-        # python 2.7 subprocess constructor does not take a stderr arg >:|
+        # python 2.7 constructor does not take stderr arg >:|
         raise subprocess.CalledProcessError( p.returncode, cmd, output=out )
 
     return out,err
@@ -65,6 +65,15 @@ class Frig:
             if out == 'Already up-to-date.\n':
                 return 'error', 'nothing to deploy.\n'
 
+            # amend the last commit with a merge-like message because merge
+            # does not fire the hook that adds the change-id.  remove/replace
+            # this once we're free of gerrit.
+            call( [
+                'git', 'commit', '--amend', '-m',
+                'Merge ' + c['merge'] + ' into ' + c['deploy'] + '\n\n'
+                + commitmsg
+            ] )
+
         except subprocess.CalledProcessError as e:
             # generally don't deploy tests
             # TODO identify which repos this applies to.
@@ -78,10 +87,6 @@ class Frig:
             else:
                 return 'error',str(e.output)
 
-        # TODO unless the block above that deletes tests ran, our merge
-        # commit will be sans change-id. i am loath to tie this to that
-        # gerrit behavior...but it's probably the least bad option.
-
         newrev,err = call( ['git', 'rev-parse', 'HEAD'] )
         return 'success','updated ' + c['deploy'] + ' to ' + newrev
 
@@ -92,18 +97,11 @@ class Frig:
         # TODO this assumes the parent repo is checked out to the deployment
         # branch. branch name could be supplied with a flag. worth it?
 
-        # TODO multiple submodules of same repo? gets ugly...
-        submodule_path = subprocess.check_output( [
-            'sed',
-            's/^.*path = \(.*' + c['target'] + '\)$/\\1/;tx;d;:x',
-            '.gitmodules'
-        ] ).rstrip() # i can't figure out why this captures a newline
-
-        if not submodule_path:
-            return 'error','missing submodule'
+        if not os.path.isdir( c['target'] ):
+            return 'error','submodule path is not a directory'
 
         parent = os.getcwd()
-        os.chdir( os.path.join( parent, submodule_path ) )
+        os.chdir( os.path.join( parent, c['target'] ) )
         call( ['git', 'fetch', c['remote']] )
         call( ['git', 'checkout', c['deploy']] )
 
@@ -132,7 +130,7 @@ def main ( args ):
 
     parser = argparse.ArgumentParser( description='Fund Raising Intuit Git' )
     parser.add_argument( 'action', choices=['prep', 'bump'] )
-    parser.add_argument( 'target', help='Submodule to update', nargs='?' )
+    parser.add_argument( 'target', help='path to submodule', nargs='?' )
     parser.add_argument( '-m', '--merge', default=defaults['merge'] )
     parser.add_argument( '-d', '--deploy', default=defaults['deploy'] )
     parser.add_argument( '-r', '--remote', default=defaults['remote'] )
