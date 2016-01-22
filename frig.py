@@ -107,7 +107,6 @@ class Frig:
         except subprocess.CalledProcessError as e:
             # if the submodule has been developed in place (vs separate checkout)
             # we'll already be at the new revision
-            #               v--- this makes me twitch
             if e.output[-43:] == 'nothing to commit, working directory clean\n':
                 return 'error', 'already at latest revision.\n'
             return 'error',str(e.output)
