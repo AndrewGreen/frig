@@ -51,7 +51,7 @@ class Frig:
             )
 
             if out == 'Already up-to-date.\n':
-                return error, 'nothing to deploy.\n'
+                return 'error', 'nothing to deploy.\n'
 
         except subprocess.CalledProcessError as e:
             # generally don't deploy tests
@@ -63,8 +63,14 @@ class Frig:
                     'Merge ' + c['merge'] + ' into ' + c['deploy'] + '\n\n'
                     + commitmsg + '\n\nRemoved tests'
                 ] )
+            else:
+                return 'error',str(e.output)
 
         newrev = subprocess.check_output( ['git', 'rev-parse', 'HEAD'] )
+
+        # TODO unless the block above that deletes tests ran, our merge
+        # commit will be sans change-id. i am loath to tie this to that
+        # behavior...but it's probably the least bad option.
 
         return 'success','updated ' + c['deploy'] + ' to ' + newrev
 
@@ -86,19 +92,25 @@ class Frig:
             return 'error','missing submodule'
 
         parent = os.getcwd()
-        os.chdir( parent + '/' + submodule_path )
+        os.chdir( os.path.join( parent, submodule_path ) )
         subprocess.check_call( ['git', 'fetch', c['remote']] )
         subprocess.check_call( ['git', 'checkout', c['deploy']] )
-        out = subprocess.check_output( ['git', 'pull'] )
-
-        if out == 'Already up-to-date.\n':
-            return 'error', 'submodule already at newest version.\n'
+        subprocess.check_call( ['git', 'pull'] )
 
         newrev = subprocess.check_output( ['git', 'rev-parse', 'HEAD'] )
         os.chdir( parent )
-        subprocess.check_call( [
-            'git', 'commit', '-am', 'Update ' + c['target'] + ' submodule'
-        ] )
+
+        try:
+            out = subprocess.check_output( [
+                'git', 'commit', '-am', 'Update ' + c['target'] + ' submodule'
+            ] )
+        except subprocess.CalledProcessError as e:
+            # if the submodule has been developed in place (vs separate checkout)
+            # we'll already be at the new revision
+            #               v--- this makes me twitch
+            if e.output[-43:] == 'nothing to commit, working directory clean\n':
+                return 'error', 'already at latest revision.\n'
+            return 'error',str(e.output)
 
         return 'success','updated ' + c['target'] + ' to ' + newrev
 
