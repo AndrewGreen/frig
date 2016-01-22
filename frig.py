@@ -11,6 +11,18 @@ defaults = {
     'remote': 'origin'
 }
 
+# all the default shell interfaces are surprisingly shitty
+def call ( cmd ):
+    p = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+
+    out,err = p.communicate()
+
+    if p.returncode > 0:
+        # python 2.7 subprocess constructor does not take a stderr arg >:|
+        raise subprocess.CalledProcessError( p.returncode, cmd, output=out )
+
+    return out,err
+
 # Fund Raising Intuit Git
 class Frig:
 
@@ -24,13 +36,13 @@ class Frig:
         c = self.config # for brevity
 
         # XXX is it safe to assume deploy branch is tracked?
-        subprocess.check_call( ['git', 'fetch', c['remote']] )
-        subprocess.check_call( ['git', 'checkout', c['deploy']] )
-        subprocess.check_call( ['git', 'pull'] )
+        call( ['git', 'fetch', c['remote']] )
+        call( ['git', 'checkout', c['deploy']] )
+        call( ['git', 'pull'] )
 
         # we should be up to date with remote
-        headrev = subprocess.check_output( ['git', 'rev-parse', 'HEAD'] )
-        remoterev = subprocess.check_output(
+        headrev,err = call( ['git', 'rev-parse', 'HEAD'] )
+        remoterev,err = call(
             ['git', 'rev-parse', c['remote'] + '/' + c['deploy']]
         )
 
@@ -39,14 +51,14 @@ class Frig:
             return 'error','deploy branch has diverged from origin'
 
         # prep commit message
-        commitmsg = subprocess.check_output( [
+        commitmsg,err = call( [
             'git', 'log', '--oneline', '--no-merges', '--reverse',
             c['deploy'] + '..' + c['merge']
         ] )
 
         # attempt the merge
         try:
-            out = subprocess.check_output(
+            out,err = call(
                 ['git', 'merge', c['merge'], '-m', commitmsg]
             )
 
@@ -57,8 +69,8 @@ class Frig:
             # generally don't deploy tests
             # TODO identify which repos this applies to.
             if e.output[:32] == 'CONFLICT (modify/delete): tests/':
-                subprocess.check_call( ['rm', '-rf', 'tests'] )
-                subprocess.check_call( [
+                call( ['rm', '-rf', 'tests'] )
+                call( [
                     'git', 'commit', '-am',
                     'Merge ' + c['merge'] + ' into ' + c['deploy'] + '\n\n'
                     + commitmsg + '\n\nRemoved tests'
@@ -66,12 +78,11 @@ class Frig:
             else:
                 return 'error',str(e.output)
 
-        newrev = subprocess.check_output( ['git', 'rev-parse', 'HEAD'] )
-
         # TODO unless the block above that deletes tests ran, our merge
         # commit will be sans change-id. i am loath to tie this to that
-        # behavior...but it's probably the least bad option.
+        # gerrit behavior...but it's probably the least bad option.
 
+        newrev,err = call( ['git', 'rev-parse', 'HEAD'] )
         return 'success','updated ' + c['deploy'] + ' to ' + newrev
 
     def bump ( self ):
@@ -93,15 +104,18 @@ class Frig:
 
         parent = os.getcwd()
         os.chdir( os.path.join( parent, submodule_path ) )
-        subprocess.check_call( ['git', 'fetch', c['remote']] )
-        subprocess.check_call( ['git', 'checkout', c['deploy']] )
-        subprocess.check_call( ['git', 'pull'] )
+        call( ['git', 'fetch', c['remote']] )
+        call( ['git', 'checkout', c['deploy']] )
 
-        newrev = subprocess.check_output( ['git', 'rev-parse', 'HEAD'] )
+        # TODO if the new revision is on the branch tip but exists only locally
+        # pull will not complain and the submodule ref will be set to something
+        # that doesn't exist on remote. is that a problem?
+        call( ['git', 'pull'] )
+
         os.chdir( parent )
 
         try:
-            out = subprocess.check_output( [
+            out,err = call( [
                 'git', 'commit', '-am', 'Update ' + c['target'] + ' submodule'
             ] )
         except subprocess.CalledProcessError as e:
@@ -111,6 +125,7 @@ class Frig:
                 return 'error', 'already at latest revision.\n'
             return 'error',str(e.output)
 
+        newrev,err = call( ['git', 'rev-parse', 'HEAD'] )
         return 'success','updated ' + c['target'] + ' to ' + newrev
 
 def main ( args ):
